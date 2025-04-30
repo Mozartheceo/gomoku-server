@@ -1,54 +1,32 @@
+// server.js - point d'entrée du serveur Gomoku avec PostgreSQL et Socket.IO
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
-const bodyParser = require('body-parser');
-const { v4: uuidv4 } = require('uuid');
+const http = require('http');
+const cors = require('cors');
+const { Pool } = require('pg');
+const setupSocket = require('./socket');
+
+require('dotenv').config();
+
 const app = express();
-const port = process.env.PORT || 3000;
+app.use(cors());
+app.use(express.json());
 
-app.use(bodyParser.json());
-
-// Connexion à la base de données SQLite
-const db = new sqlite3.Database('./database.sqlite');
-
-// Création des tables si elles n'existent pas
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS games (
-    id TEXT PRIMARY KEY,
-    board TEXT,
-    turn TEXT,
-    winner TEXT,
-    status TEXT
-  )`);
+// Connexion à la base PostgreSQL Railway
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-// Créer une partie
-app.post('/api/game', (req, res) => {
-  const gameId = uuidv4();
-  const initialBoard = JSON.stringify(Array(15).fill().map(() => Array(15).fill(null)));
-  db.run(`INSERT INTO games (id, board, turn, winner, status) VALUES (?, ?, ?, ?, ?)`,
-    [gameId, initialBoard, 'X', null, 'ongoing'],
-    (err) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ gameId });
-    }
-  );
-});
-
-// Récupérer l'état de la partie
-app.get('/api/state/:id', (req, res) => {
-  db.get(`SELECT * FROM games WHERE id = ?`, [req.params.id], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.status(404).json({ error: 'Game not found' });
-    res.json(row);
-  });
-});
-
-// Exemple basique d'une route GET pour tester
-app.get('/api/game', (req, res) => {
+// Route simple de test
+app.get('/api', (req, res) => {
   res.json({ message: 'API Gomoku active !' });
 });
 
-// Lancer le serveur
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+// Création du serveur HTTP et initialisation de Socket.IO
+const server = http.createServer(app);
+setupSocket(server, pool);
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`🚀 Serveur démarré sur le port ${PORT}`);
 });
