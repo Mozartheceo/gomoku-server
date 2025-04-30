@@ -17,9 +17,15 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
-// Route simple de test
-app.get('/api', (req, res) => {
-  res.json({ message: 'API Gomoku active !' });
+// Route pour visualiser les parties enregistrées
+app.get('/api/games', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM games ORDER BY created_at DESC LIMIT 50');
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Erreur récupération des parties :', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
 });
 
 // Création du serveur HTTP et initialisation de Socket.IO
