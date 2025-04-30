@@ -43,6 +43,11 @@ app.get('/api/state/:id', (req, res) => {
   });
 });
 
+// Exemple basique d'une route GET pour tester
+app.get('/api/game', (req, res) => {
+  res.json({ message: 'API Gomoku active !' });
+});
+
 // Lancer le serveur
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
