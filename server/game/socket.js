@@ -1,73 +1,60 @@
-// socket.js - gestion des parties Gomoku avec Socket.IO
+// socket.js - Gère les sockets pour Gomoku avec enregistrement dans PostgreSQL
 const { Server } = require('socket.io');
-const Gomoku = require('./game/engine');
 
-const activeGames = {}; // gameId -> { game: Gomoku, players: [socket1, socket2], moves: [] }
-
-function setupSocket(server) {
+function setupSocket(server, pool) {
   const io = new Server(server, {
-    cors: { origin: '*' }
+    cors: {
+      origin: '*',
+    },
   });
 
-  io.on('connection', (socket) => {
-    console.log(`🔌 Client connecté : ${socket.id}`);
+  const games = {}; // mémorise l'état des parties en mémoire
 
-    socket.on('joinGame', ({ gameId, userId }) => {
-      if (!activeGames[gameId]) {
-        activeGames[gameId] = {
-          game: new Gomoku(),
-          players: [],
-          moves: []
+  io.on('connection', (socket) => {
+    console.log(`✅ Nouveau client connecté : ${socket.id}`);
+
+    socket.on('joinGame', ({ gameId, player }) => {
+      socket.join(gameId);
+      if (!games[gameId]) {
+        games[gameId] = {
+          moves: [],
+          players: {},
+          currentTurn: 'x',
         };
       }
+      games[gameId].players[player] = socket.id;
+      io.to(gameId).emit('gameUpdate', games[gameId]);
+    });
 
-      const gameData = activeGames[gameId];
-      if (gameData.players.length >= 2) {
-        socket.emit('full', 'Partie pleine');
-        return;
+    socket.on('playMove', ({ gameId, x, y, player }) => {
+      const game = games[gameId];
+      if (!game || game.currentTurn !== player) return;
+
+      game.moves.push({ x, y, player });
+      game.currentTurn = player === 'x' ? 'o' : 'x';
+      io.to(gameId).emit('movePlayed', { x, y, player });
+    });
+
+    socket.on('endGame', async ({ gameId, winner }) => {
+      const game = games[gameId];
+      if (!game) return;
+
+      const player_x = Object.keys(game.players)[0] || 'unknown';
+      const player_o = Object.keys(game.players)[1] || 'unknown';
+      const moves = game.moves;
+
+      try {
+        await pool.query(
+          'INSERT INTO games (player_x, player_o, winner, moves) VALUES ($1, $2, $3, $4)',
+          [player_x, player_o, winner, JSON.stringify(moves)]
+        );
+        console.log(`✅ Partie ${gameId} enregistrée en base de données.`);
+      } catch (err) {
+        console.error('❌ Erreur lors de l’enregistrement en base :', err);
       }
 
-      gameData.players.push({ socket, userId });
-      socket.join(gameId);
-
-      socket.emit('joined', { success: true, symbol: gameData.players.length === 1 ? 'X' : 'O' });
-      if (gameData.players.length === 2) {
-        io.to(gameId).emit('start', 'Partie lancée');
-      }
-
-      socket.on('move', ({ row, col }) => {
-        const game = gameData.game;
-        const symbol = game.getCurrentPlayer();
-        const placed = game.placeMove(row, col);
-
-        if (!placed) return;
-
-        gameData.moves.push({ row, col, player: symbol });
-        io.to(gameId).emit('move', { row, col, player: symbol });
-
-        if (game.winner) {
-          io.to(gameId).emit('gameOver', { winner: symbol });
-          // TODO: Enregistrer dans la base PostgreSQL ici
-          delete activeGames[gameId];
-        }
-      });
-
-      socket.on('abandon', () => {
-        const opponent = gameData.players.find(p => p.socket.id !== socket.id);
-        if (opponent) {
-          opponent.socket.emit('winByForfeit');
-        }
-        delete activeGames[gameId];
-      });
-
-      socket.on('disconnect', () => {
-        console.log(`❌ Déconnecté : ${socket.id}`);
-        const opponent = gameData.players.find(p => p.socket.id !== socket.id);
-        if (opponent) {
-          opponent.socket.emit('opponentLeft');
-        }
-        delete activeGames[gameId];
-      });
+      delete games[gameId];
+      io.to(gameId).emit('gameEnded', { winner });
     });
   });
 }
